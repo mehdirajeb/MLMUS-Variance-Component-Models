@@ -1,0 +1,252 @@
+---
+title: "Chapter 2. Review of Linear Regression"
+author: 
+- JoonHo Lee (jlee296@ua.edu)
+- Mehdi Rajeb(mrajeb@crimson.ua.edu)
+date: "October 5, 2021"
+format: html
+---
+
+```{r setup, include=FALSE}
+#| label: load-packages
+#| #| include: false
+library(tidyverse)
+library(haven)
+library(broom)
+library(janitor)
+library(dplyr)
+library(multcomp)
+library(foreign)
+library(lme4)
+library(lmerTest)
+library(lmtest)
+library(sandwich)
+library(ggplot2)
+library(sjPlot)
+library(sjstats)
+```
+
+## Chpater 2: Variance Component Models
+
+## Introduction to this chapter
+
+This chapter is focused on elaborating simple situations with clustered data without covariates or explanatory variables. This chapter primarily introduces two-level linear model i.e., variance-component model. This model is also known as one-way random-effects ANOVA or unconditional hierarchical model.
+
+## Assessing the quality of two instrument for measuring people's peak-expiratory-flow rate (PEFR)
+
+Data used in this chapter, obtained from a reliability study to assess the quality of two instruments for PEFR. The PEFR data has following variables.
+
+-   `id`: subject identifier
+-   `wp1`: Wright peak-flow meter, occasion 1
+-   `wp2`: Wright peak-flow meter, occasion 2
+-   `wm1`: Mini Wright peak-flow meter, occasion 1
+-   `wm2`: Mini Wright peak-flow meter, occasion 2
+
+## Getting the data in R
+
+```{r}
+# To import PEFR data we use haven R-package
+df<- read_dta('pefr.dta')
+
+#Let us have a look at the data set
+knitr::kable(head(df))
+
+```
+
+## Inspecting within-subject dependence
+
+First, let us plot The first and second recordings on the Mini Wright peak-flow meter against the subject identifier with an horizontal line representing the overall mean.
+
+```{r}
+# Lets generate the mean wm
+df<- df %>% 
+      mutate(mean_wm=(wm1+ wm2)/2)
+
+#Summarize mean_wm
+summary<- df %>% 
+  summarize(Obs = nrow(df),
+            Mean = mean(mean_wm, na.rm= TRUE), 
+            Std.Dev.= sd(mean_wm, na.rm= TRUE), 
+            Min = min(mean_wm, na.rm= TRUE), 
+            Max = max(mean_wm, na.rm= TRUE))
+
+knitr::kable(summary)
+
+```
+
+The plot of PEFR readings by Mini wright peak-flow meter for both occasion.
+
+```{r}
+# Plot of PEFR readings by Mini wright peak-flow meter for both occasion. 
+ df %>% 
+  ggplot() +
+  geom_point(aes(x= id, y= wm1,color= "Occasion 1"))+
+  geom_point(aes(x= id, y= wm2, color = "Occason2"))+
+  geom_hline(yintercept = mean(df$mean_wm))+
+  labs(
+    title= ' Figure 2.2: First and second measurements of peak-expiratory-flow using Mini Wright meter versus subject number 
+    (the horizontal line represents the overall mean)', 
+    x ="Subject id", 
+    y= "Mini Wright measurement"
+    )
+
+```
+
+# The variance-components model(2.4)
+
+### Intraclass correlation versus Pearson correlation
+
+```{r}
+# Creating new variable: the second recordings of mini wright meter plus 100
+df<-df %>% 
+  mutate(wm2_100 = wm2+100)
+
+# Plot of PEFR readings by Mini wright peak-flow meter for both occasion adding 100 to second recording. 
+ df %>% 
+  ggplot() +
+  geom_point(aes(x= id, y= wm1,color= "Occasion 1")  )+
+  geom_point(aes(x= id, y= wm2_100, color = "Occason2"))+
+  geom_hline(yintercept = mean(df$mean_wm))+
+  labs(
+    title = "Figure 2.6: First recording of Mini Wright meter and second recording plus 100 versus subject number 
+    (the horizontal line represents theoverall mean)",
+    x = " Subject id", 
+    y= "Mini Wright measurements, adding 100 at occasion 2")
+
+```
+
+# Estimation using R
+
+## Data preparation: Reshaping from wide form to long form (2.5.1)
+
+```{r}
+# First let us remove wm2_100 from our data set. 
+df<- df %>%  
+  dplyr::select(-wm2_100)
+
+# Now let us reshape the data from wide form to long form
+# For convenience we are transforming the data into long-form using pivot_longer function.
+df_1<- df %>% 
+  pivot_longer(!c(id, mean_wm), 
+               names_to = "variable",
+               values_to = "value"
+  )
+
+# Let us use seperate fuction to specify Occasion
+df_2<- df_1 %>% 
+  separate(variable,c("variable", "Occasion"), sep='(?<=[A-Za-z])(?=[0-9])')
+
+# Let us convert the data again to achieve the desired long form-data.
+
+df_3<- df_2 %>% 
+  pivot_wider(id_cols = c('id', 'mean_wm', 'Occasion'),
+  names_from = c(variable),
+  values_from = c(value))
+
+# df_3 is now a converted to a long form data
+
+head(df_3)
+
+```
+
+We are now ready to use R to estimated the random effect model.In this case, we are using ML method for the estimation process.
+
+## Using MLE to estimate random effect model (2.5.2)
+
+```{r}
+# We are using lme4 R-package.
+# The model does not have any covariate, so we are using 1 as covariate, and specifying the random affect by "|" sign.
+#Variance-components model us ML method
+model_1 <- lmer(wm ~ 1+(1|id) , 
+                data = df_3, 
+                REML = FALSE )
+summary(model_1)
+```
+
+## Variance component model using REML (2.5.3).
+
+REML method is preferable when the number of clusters is small.
+
+```{r}
+#Variance-components model us REML method
+model_2<-lmer(wm ~ 1+(1|id) , 
+              data = df_3, 
+              REML = TRUE )
+summary(model_2)
+
+```
+
+## Intraclass correlation
+
+We can calculate intra-cluster correlation (ICC) using sjstats R-package.
+
+```{r}
+# Intra-class correlations from Variance component model with REML
+performance::icc(model_2)
+```
+
+# Hypothesis tests and confidence intervals (2.6)
+
+## Liklihood-ratio test (2.6.1)
+
+We can think of performing likelihood-ratio test by fitting variance-component model without the random component, and by comparing the model with variance-component model.
+
+```{r}
+# Specifying regression model without random intercept.
+model_3<- lm(wm~ 1, 
+             data= df_3)
+
+# Comparing models.
+anova(model_2, model_3)
+```
+
+## crossed versus nested effects(2.9)
+
+If a random effect is specified for subjects and a fixed effect for occasion, we obtain a so-called mixed-effects two-way ANOVA model. Such a model can
+be fit by introducing a dummy variable for the second occasion in the fixed part of the model. 
+
+First, let us create a dummy variable `occ2`. 
+```{r}
+# Creating dummy variable occ2
+# We are applying condition if occasion == 2 then occ2==1
+df_4<- df_3 %>% 
+  mutate(occ2 = ifelse(Occasion ==2, 1,0))
+
+head(df_4)
+
+```
+
+Now let us estimate the random-effect model.
+
+
+```{r}
+# Random effect model using occ2 as explanatory variable and ID as random component. 
+model_4<-lmerTest::lmer(wm ~ occ2 +(1|id) , 
+                        data = df_4)
+summary(model_4)
+
+```
+
+## Parameter Estimatoin (2.10)
+### Inference for $\beta$
+
+Estimated model based standard error for the OLS estimator by using `lm` R-function. 
+
+```{r}
+# Random effect model using occ2 as explanatory variable and ID as random component. 
+
+model_5<-lm(wm ~ 1 , 
+            data = df_4)
+summary(model_5)
+
+```
+
+
+The summary output provides us with $\widehat{SE}(\widehat{\beta}^{OLS})= 18.95$. 
+
+### Empirical Bayes prediction(2.11.2- 2.11.4)
+
+The section is still under development. 
+
+
+
